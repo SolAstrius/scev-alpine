@@ -45,10 +45,20 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             gcc-riscv64-linux-gnu libc6-dev-riscv64-cross \
             bc bison flex libssl-dev libelf-dev libncurses-dev \
-            build-essential cpio kmod \
+            build-essential cpio kmod ccache \
             squashfs-tools e2fsprogs \
             ca-certificates curl wget git \
             xz-utils zstd python3 jq
+
+      - name: Wire up ccache
+        # Cuts config-only rebuilds from ~30 min to ~5 min. On a kernel
+        # version bump (rare) the cache goes cold and we're back to full
+        # build time. ccache speaks the cross-compiler name directly; no
+        # masquerade PATH trick needed since we invoke it via
+        # CROSS_COMPILE="ccache riscv64-linux-gnu-".
+        run: |
+          ccache --max-size=1G
+          echo "CROSS_COMPILE=ccache riscv64-linux-gnu-" >> $GITHUB_ENV
 
       - name: Cache kernel source + downloads
         uses: actions/cache@v4
@@ -61,8 +71,20 @@ jobs:
           restore-keys: |
             kernel-${{ matrix.alpine }}-
 
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ matrix.alpine }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ matrix.alpine }}-
+
       - name: Build kernel
         run: bash tools/build-kernel.sh
+
+      - name: ccache stats
+        if: always()
+        run: ccache --show-stats
 
       - name: Build modloop
         run: bash tools/build-modloop.sh
