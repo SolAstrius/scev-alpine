@@ -42,6 +42,7 @@
             squashfsTools
             e2fsprogs
             dosfstools
+            util-linux   # sfdisk for partitioning the nvme image
 
             # --- fetchers / compression / misc ---
             curl
@@ -95,7 +96,7 @@
             cross.buildPackages.binutils
             gnumake bc bison flex pkg-config perl rsync
             openssl elfutils ncurses cpio kmod
-            squashfsTools e2fsprogs dosfstools
+            squashfsTools e2fsprogs dosfstools util-linux
             curl wget git xz zstd python3 jq
           ];
 
