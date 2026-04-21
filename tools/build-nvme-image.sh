@@ -158,9 +158,12 @@ mkfs.ext4 -F -q \
     "${FS_KB}K"
 
 echo "=== Compressing for release ==="
-zstd -f -19 -T0 --rm -o "${IMG}.zst" "$IMG"
-ls -lh "${IMG}.zst"
-sha256sum "${IMG}.zst" > "${OUT}/SHA256SUMS"
+# Keep both the raw .img (for consumers that can't decompress zstd —
+# e.g. the mod's Gradle fetch task) and the .img.zst (~35% smaller for
+# bandwidth-constrained consumers). --rm dropped so $IMG survives.
+zstd -f -19 -T0 -o "${IMG}.zst" "$IMG"
+ls -lh "${IMG}" "${IMG}.zst"
+sha256sum "${IMG}" "${IMG}.zst" > "${OUT}/SHA256SUMS"
 
 echo
 echo "=== Done ==="

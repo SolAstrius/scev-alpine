@@ -19,6 +19,9 @@ on:
       - 'Makefile'
       - '.github/workflows/build.yml'
 
+permissions:
+  contents: write   # needed to create/update releases via softprops/action-gh-release
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -113,15 +116,47 @@ jobs:
           path: |
             out/vmlinuz-lts
             out/modloop-lts
+            out/alpine-scev-*.img
             out/alpine-scev-*.img.zst
             out/config-*.riscv64
             out/SHA256SUMS
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Publish release
+      - name: Publish rolling 'latest' release
+        # On every push to main, overwrite the `latest` tag with the new
+        # artefacts. Gives the mod's Gradle fetch step a stable URL
+        # (https://github.com/<owner>/scev-alpine/releases/download/latest/…)
+        # without having to bump a version pin every build.
+        if: github.ref == 'refs/heads/main' && matrix.alpine == '3.23'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Latest main build"
+          prerelease: true
+          make_latest: false       # keep dated tags as the canonical releases
+          files: |
+            out/vmlinuz-lts
+            out/modloop-lts
+            out/alpine-scev-*.img
+            out/alpine-scev-*.img.zst
+            out/config-*.riscv64
+            out/SHA256SUMS
+          body: |
+            Rolling latest build of `main`. Overwritten every push.
+
+            - Commit: ${{ github.sha }}
+            - Kernel: ${{ steps.tag.outputs.kver }}
+            - Alpine: ${{ matrix.alpine }}
+
+            Consumers: the scev mod fetches
+            `alpine-scev-*.img` from this release at build time. For a
+            stable pin, use one of the dated `alpine-*-linux-*-<sha>`
+            releases instead.
+
+      - name: Publish dated release
         # Only on scheduled runs + explicit dispatches. Push-triggered CI
-        # uploads artefacts (above) but doesn't tag a release — keeps the
+        # only bumps the rolling `latest` tag above — keeps the versioned
         # release list tied to deliberate cadence, not every commit.
         if: github.event_name != 'push'
         uses: softprops/action-gh-release@v2
@@ -132,6 +167,7 @@ jobs:
           files: |
             out/vmlinuz-lts
             out/modloop-lts
+            out/alpine-scev-*.img
             out/alpine-scev-*.img.zst
             out/config-*.riscv64
             out/SHA256SUMS
