@@ -66,6 +66,17 @@ bash "${KSRC}/scripts/kconfig/merge_config.sh" -m \
 echo "=== Building kernel + modules ==="
 export ARCH=riscv
 export CROSS_COMPILE=${CROSS_COMPILE:-riscv64-linux-gnu-}
+# Match Alpine's linux-lts naming convention so our kernel's uname -r
+# and modules directory line up with what Alpine's stock initramfs
+# (from the dl-cdn alpine-uboot tarball) expects. Alpine packages the
+# initramfs with modules under /lib/modules/${KVER}-${KREL}-lts/; if we
+# don't set LOCALVERSION, modules_install writes to /lib/modules/${KVER}/
+# and modprobe in the initramfs can't find loop.ko / squashfs.ko, which
+# means modloop never mounts and the guest comes up with an empty
+# /lib/modules (→ no network drivers → no eth0). See the parent mod's
+# build.gradle assembleAlpineImage task for the other side of this
+# contract.
+export LOCALVERSION="-${KREL}-lts"
 JOBS=$(nproc)
 make -C "$KSRC" -j"$JOBS" olddefconfig
 make -C "$KSRC" -j"$JOBS" Image modules
