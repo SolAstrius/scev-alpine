@@ -1,0 +1,109 @@
+name: build
+
+on:
+  schedule:
+    # Monday 06:00 UTC — catches the typical Alpine point-release cadence
+    # (Fridays/Sundays, depending on the branch) without hammering runners.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      alpine_version:
+        description: 'Alpine branch (e.g. 3.23, 3.24, edge)'
+        required: false
+        default: '3.23'
+  push:
+    paths:
+      - 'config/**'
+      - 'tools/**'
+      - 'Dockerfile'
+      - 'Makefile'
+      - '.github/workflows/build.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    strategy:
+      fail-fast: false
+      matrix:
+        alpine: ['3.23']  # add '3.24' / 'edge' here to fan out
+
+    env:
+      ALPINE_VER: ${{ matrix.alpine }}
+      DEBIAN_FRONTEND: noninteractive
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host build deps
+        # We could docker-build-and-run, but direct host-side is faster in
+        # CI (no image pull, no container spin-up). Mirror the Dockerfile
+        # apt list.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-riscv64-linux-gnu libc6-dev-riscv64-cross \
+            bc bison flex libssl-dev libelf-dev libncurses-dev \
+            build-essential cpio kmod \
+            squashfs-tools e2fsprogs \
+            ca-certificates curl wget git \
+            xz-utils zstd python3 jq
+
+      - name: Cache kernel source + downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/linux-*.tar.xz
+            build/linux-*/
+            build/alpine-uboot-*.tar.gz
+          key: kernel-${{ matrix.alpine }}-${{ hashFiles('config/scev.config', 'tools/build-kernel.sh') }}
+          restore-keys: |
+            kernel-${{ matrix.alpine }}-
+
+      - name: Build kernel
+        run: bash tools/build-kernel.sh
+
+      - name: Build modloop
+        run: bash tools/build-modloop.sh
+
+      - name: Build NVMe image
+        run: bash tools/build-nvme-image.sh
+
+      - name: Derive release tag
+        id: tag
+        run: |
+          KVER=$(sed -n 's/^KVER=//p' build/kver)
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          TAG="alpine-${ALPINE_VER}-linux-${KVER}-${SHORT_SHA}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "kver=${KVER}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: scev-alpine-${{ matrix.alpine }}
+          path: |
+            out/vmlinuz-lts
+            out/modloop-lts
+            out/alpine-scev-*.img.zst
+            out/config-*.riscv64
+            out/SHA256SUMS
+          retention-days: 30
+
+      - name: Publish release
+        # Only on scheduled runs + explicit dispatches. Push-triggered CI
+        # uploads artefacts (above) but doesn't tag a release — keeps the
+        # release list tied to deliberate cadence, not every commit.
+        if: github.event_name != 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Alpine ${{ matrix.alpine }} • Linux ${{ steps.tag.outputs.kver }}-scev
+          generate_release_notes: true
+          files: |
+            out/vmlinuz-lts
+            out/modloop-lts
+            out/alpine-scev-*.img.zst
+            out/config-*.riscv64
+            out/SHA256SUMS

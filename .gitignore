@@ -1,0 +1,6 @@
+/build/
+/out/
+*.tar.xz
+*.tar.gz
+*.img
+*.img.zst
