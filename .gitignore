@@ -4,3 +4,7 @@
 *.tar.gz
 *.img
 *.img.zst
+
+# direnv
+.direnv/
+/result
