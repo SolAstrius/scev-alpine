@@ -102,6 +102,11 @@ jobs:
           echo "kver=${KVER}" >> "$GITHUB_OUTPUT"
 
       - name: Upload build artefacts
+        # `if: always()` so a failure in a late step (e.g. image packing)
+        # still surfaces whatever the earlier steps produced. Otherwise we
+        # throw away a 30-minute kernel compile every time the Alpine-side
+        # URL resolution glitches.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: scev-alpine-${{ matrix.alpine }}
@@ -111,6 +116,7 @@ jobs:
             out/alpine-scev-*.img.zst
             out/config-*.riscv64
             out/SHA256SUMS
+          if-no-files-found: warn
           retention-days: 30
 
       - name: Publish release

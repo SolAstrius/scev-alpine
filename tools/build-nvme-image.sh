@@ -23,9 +23,34 @@ ALPINE_VER=${ALPINE_VER:-3.23}
 ALPINE_REL=${ALPINE_REL:-$ALPINE_VER}
 
 if [ "$ALPINE_REL" = "$ALPINE_VER" ]; then
-    # Resolve the latest point release for the given branch.
+    # Resolve the latest point release for the given branch by parsing
+    # latest-releases.yaml and picking out the alpine-uboot flavour. The
+    # YAML is one record per block, separated by a top-level `-`; awk-only
+    # parsing is fragile because `version:` lands BEFORE `flavor:` in each
+    # block, so state has to be carried. Use python3 — CI installs it
+    # anyway for other steps, and the parser is obvious.
     ALPINE_REL=$(curl -fsSL "https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VER}/releases/riscv64/latest-releases.yaml" \
-        | awk '/^-[[:space:]]/{inblock=0} /^- file:.*uboot.*tar\.gz/{inblock=1} inblock && /version:/{print $2; exit}')
+        | python3 -c '
+import sys, re
+block = {}
+def emit(b):
+    if b.get("flavor") == "alpine-uboot":
+        print(b["version"])
+        sys.exit(0)
+for raw in sys.stdin:
+    line = raw.rstrip("\n")
+    if re.match(r"^-\s*$", line):
+        emit(block); block = {}
+    else:
+        m = re.match(r"^\s+(\w+):\s*(.*)$", line)
+        if m: block[m.group(1)] = m.group(2).strip().strip("\"")
+emit(block)
+sys.exit("no alpine-uboot entry found in latest-releases.yaml")
+')
+    if [ -z "$ALPINE_REL" ]; then
+        echo "Failed to resolve Alpine $ALPINE_VER latest release" >&2
+        exit 1
+    fi
     echo "    Resolved Alpine $ALPINE_VER latest release: ${ALPINE_REL}"
 fi
 
