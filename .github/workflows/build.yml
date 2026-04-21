@@ -46,7 +46,7 @@ jobs:
             gcc-riscv64-linux-gnu libc6-dev-riscv64-cross \
             bc bison flex libssl-dev libelf-dev libncurses-dev \
             build-essential cpio kmod ccache \
-            squashfs-tools e2fsprogs \
+            squashfs-tools e2fsprogs util-linux \
             ca-certificates curl wget git \
             xz-utils zstd python3 jq
 

@@ -78,27 +78,84 @@ echo "=== Swapping kernel + modloop ==="
 cp "${OUT}/vmlinuz-lts" "${ROOTFS}/boot/vmlinuz-lts"
 cp "${OUT}/modloop-lts" "${ROOTFS}/boot/modloop-lts"
 
-# extlinux.conf carries a root= pointing at boot media; for our usage,
-# Alpine's stock value is fine (`modloop=/boot/modloop-lts` → modloop is
-# local to this device). Record what's there for debugging.
-echo "=== extlinux.conf (unchanged) ==="
-cat "${ROOTFS}/extlinux/extlinux.conf" | sed 's/^/    /'
+# Patch Alpine's stock extlinux.conf to route the kernel console to our
+# UART + framebuffer, and drop `quiet` so boot output is visible in dev.
+#
+# Alpine's default APPEND is
+#     modules=loop,squashfs,sd-mod,usb-storage quiet
+# which works on real boards where U-Boot pre-configures a console the
+# kernel inherits. On RVVM the kernel needs to be told explicitly:
+#     console=ttyS0,115200   — the mod's kernel-console UART (ttyS0)
+#     console=tty0           — the framebuffer, so Alpine login lands on
+#                              the workstation screen
+#     earlycon=sbi           — visible before simple-framebuffer attaches
+# Order matters: Linux picks the LAST `console=` as /dev/console, which
+# is where getty respawns, so tty0 is last → login prompt on the screen.
+EXTLINUX="${ROOTFS}/extlinux/extlinux.conf"
+python3 - "$EXTLINUX" <<'PY'
+import re, sys
+path = sys.argv[1]
+with open(path) as f:
+    text = f.read()
+def rewrite_append(m):
+    existing = m.group(1).split()
+    # Drop `quiet` — we want to see boot output.
+    filtered = [w for w in existing if w != "quiet"]
+    # Drop any pre-existing console=/earlycon= so we don't stack them.
+    filtered = [w for w in filtered if not w.startswith(("console=", "earlycon="))]
+    # Append ours in the right order.
+    filtered += ["console=ttyS0,115200", "earlycon=sbi", "console=tty0"]
+    return "APPEND " + " ".join(filtered)
+text = re.sub(r"APPEND\s+(.*)", rewrite_append, text)
+with open(path, "w") as f:
+    f.write(text)
+PY
 
-# Pack into an ext4 image sized with ~20% headroom over the content
-# footprint. Rounded up to the nearest MiB.
+echo "=== extlinux.conf (patched) ==="
+sed 's/^/    /' "$EXTLINUX"
+
+# Pack into a partitioned disk image. Layout:
+#
+#   byte 0      MBR with one bootable Linux (0x83) partition
+#   byte 1 MiB  partition 1 start (2048-sector aligned)
+#   ...         ext4 filesystem with the Alpine boot layout
+#
+# U-Boot 2023.04's distro-boot scans for bootable partitions via
+# `part list -bootable`; an unpartitioned raw filesystem returns no
+# matches and boot falls through to EFI / nothing. Empirically verified
+# in the mod — OpenSBI → U-Boot → "No partition table - nvme 0" → drop
+# to prompt. Wrapping in MBR unblocks extlinux.conf detection.
+#
+# No losetup / sudo needed: mkfs.ext4 -E offset= operates inside a
+# pre-sized file, so the whole build stays rootless.
+PART_START_KB=1024                                # 1 MiB boot-alignment conventional
 SIZE_KB=$(du -sk "$ROOTFS" | cut -f1)
-IMG_KB=$(( (SIZE_KB * 120 / 100 + 1023) / 1024 * 1024 ))  # round up to MiB
+# Sum footprint + 20% headroom + partition-table space, round up to MiB.
+IMG_KB=$(( (SIZE_KB * 120 / 100 + PART_START_KB + 1023) / 1024 * 1024 ))
+FS_KB=$(( IMG_KB - PART_START_KB ))
+FS_OFFSET_BYTES=$(( PART_START_KB * 1024 ))
 IMG="${OUT}/alpine-scev-${ALPINE_REL}-riscv64.img"
 
-echo "=== Packing ext4 image (${IMG_KB} KiB) ==="
-dd if=/dev/zero of="$IMG" bs=1024 count="$IMG_KB" status=none
-# mkfs.ext4 with a deterministic UUID/label so the mod can reference the
-# volume label rather than relying on file-path probing.
+echo "=== Packing partitioned disk image (${IMG_KB} KiB total, ${FS_KB} KiB filesystem) ==="
+
+# Create the sparse backing file.
+truncate -s "${IMG_KB}K" "$IMG"
+
+# Write MBR: one primary partition starting at sector 2048 (1 MiB),
+# type 0x83 (Linux), marked bootable so U-Boot's `part list -bootable`
+# picks it up.
+echo 'start=2048, type=83, bootable' | sfdisk --quiet "$IMG"
+
+# mkfs.ext4 inside the partition window. -E offset= skips the MBR
+# region, final positional arg limits filesystem size to the partition
+# (otherwise mkfs would try to fill the whole image including offset).
 mkfs.ext4 -F -q \
+    -E offset="$FS_OFFSET_BYTES" \
     -L SCEV_ALPINE \
     -U deadbeef-cafe-beef-feed-a1befacefeed \
     -d "$ROOTFS" \
-    "$IMG"
+    "$IMG" \
+    "${FS_KB}K"
 
 echo "=== Compressing for release ==="
 zstd -f -19 -T0 --rm -o "${IMG}.zst" "$IMG"
