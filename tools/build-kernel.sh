@@ -47,7 +47,9 @@ if [ ! -d "$KSRC" ]; then
 fi
 
 echo "=== Fetching Alpine's linux-lts config for riscv64 ==="
-ACFG_URL="https://gitlab.alpinelinux.org/alpine/aports/-/raw/${ALPINE_VER}-stable/main/linux-lts/config-lts.riscv64"
+# Aports naming: main/linux-lts/lts.<arch>.config (flavor-first, not
+# config-first — cf. main/linux-lts/ listing in aports).
+ACFG_URL="https://gitlab.alpinelinux.org/alpine/aports/-/raw/${ALPINE_VER}-stable/main/linux-lts/lts.riscv64.config"
 ACFG="${BUILD}/alpine.config"
 curl -fsSL "$ACFG_URL" -o "$ACFG"
 
