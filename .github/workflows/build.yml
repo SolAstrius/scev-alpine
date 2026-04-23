@@ -63,19 +63,29 @@ jobs:
           ccache --max-size=1G
           echo "CROSS_COMPILE=ccache riscv64-linux-gnu-" >> $GITHUB_ENV
 
-      # save-always on all three caches: actions/cache@v4 defaults the
-      # post-action condition to `success()`, which means a downstream
-      # step failure (e.g. sysinstall step erroring out) silently skips
-      # the cache save. We then have to redo the 30-min kernel build
-      # from cold on the next push. save-always: true makes the post
-      # action use `if: always()` so partial work is preserved across
-      # build failures — important here because each cached path is
-      # idempotent download/intermediate state, not failure-tainted
-      # output: ccache hashes inputs so stale entries don't corrupt
-      # later builds, the kernel tarball + extracted source are
-      # invariant by version, and apk-cache is just downloaded .apks.
-      - name: Cache kernel source + downloads
-        uses: actions/cache@v4
+      # All three caches use the split restore/save pattern (instead of
+      # the all-in-one actions/cache@v4) so we can save-on-failure. The
+      # all-in-one's post-action defaults to `if: success()`, meaning a
+      # downstream step failure (e.g. sysinstall erroring out) silently
+      # skips the cache save and the next run pays full cold-cache cost
+      # for a 30-min kernel build. The deprecated `save-always: true`
+      # input was the old workaround; actions/cache deprecated it
+      # (https://github.com/actions/cache/tree/main/save#always-save-cache)
+      # in favor of an explicit `actions/cache/save@v4` step gated on
+      # `if: always() && steps.<restore>.outputs.cache-hit != 'true'`.
+      #
+      # Save steps live at the bottom of the build job. Each references
+      # the matching restore step's `cache-primary-key` output so the
+      # save key matches what the restore expected — no drift if
+      # hashFiles() inputs change mid-run.
+      #
+      # Safety: each cached path is invariant or input-keyed, not
+      # failure-tainted output. ccache hashes inputs (won't reuse
+      # stale entries), the kernel tarball + extracted source are
+      # immutable per version, apk-cache is just .apk downloads.
+      - name: Restore kernel source + downloads cache
+        id: kernel-cache-restore
+        uses: actions/cache/restore@v4
         with:
           path: |
             build/linux-*.tar.xz
@@ -84,18 +94,17 @@ jobs:
           key: kernel-${{ matrix.alpine }}-${{ hashFiles('config/scev.config', 'tools/build-kernel.sh') }}
           restore-keys: |
             kernel-${{ matrix.alpine }}-
-          save-always: true
 
-      - name: Cache ccache
-        uses: actions/cache@v4
+      - name: Restore ccache
+        id: ccache-restore
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/ccache
           key: ccache-${{ matrix.alpine }}-${{ github.sha }}
           restore-keys: |
             ccache-${{ matrix.alpine }}-
-          save-always: true
 
-      - name: Cache apk package downloads
+      - name: Restore apk package downloads cache
         # Used by tools/build-nvme-sysinstall.sh's `apk.static --cache-dir`
         # so the ~50 packages bootstrapped into the sys-install rootfs
         # (alpine-base, openrc, dhcpcd, openssh, …) aren't re-downloaded
@@ -107,13 +116,13 @@ jobs:
         # invalidates correctly. The restore-key fallback still picks
         # up the most recent cache for the same Alpine branch when the
         # key misses, so script-only edits get a partial warm cache.
-        uses: actions/cache@v4
+        id: apk-cache-restore
+        uses: actions/cache/restore@v4
         with:
           path: build/apk-cache
           key: apk-cache-${{ matrix.alpine }}-${{ hashFiles('tools/build-nvme-sysinstall.sh') }}
           restore-keys: |
             apk-cache-${{ matrix.alpine }}-
-          save-always: true
 
       - name: Build kernel
         run: bash tools/build-kernel.sh
@@ -141,8 +150,8 @@ jobs:
         # Real root via sudo lets apk set proper 0:0 ownership on system
         # paths. -E preserves ALPINE_VER and friends from the workflow
         # env. The chown afterward returns build/ + out/ to runner
-        # ownership so actions/cache@v4 (Post Cache apk package downloads)
-        # and actions/upload-artifact@v4 can read them.
+        # ownership so the apk-cache save step (and upload-artifact) can
+        # read them.
         #
         # Reuses the kernel + modules tree from the steps above — see
         # tools/build-nvme-sysinstall.sh, which bails early if
@@ -232,3 +241,34 @@ jobs:
             out/alpine-scev-*.img.zst
             out/config-*.riscv64
             out/SHA256SUMS
+
+      # Cache saves run last, gated on `if: always()` so they fire even
+      # if any earlier step (kernel build, sysinstall, release publish)
+      # failed. The `cache-hit != 'true'` guard skips the save when the
+      # restore got an exact-key match — the cache for that key already
+      # exists, no point uploading a duplicate. Restore-key (partial)
+      # hits return `cache-hit = 'false'`, so they DO trigger a save
+      # under the new exact key.
+      - name: Save kernel source + downloads cache
+        if: always() && steps.kernel-cache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build/linux-*.tar.xz
+            build/linux-*/
+            build/alpine-uboot-*.tar.gz
+          key: ${{ steps.kernel-cache-restore.outputs.cache-primary-key }}
+
+      - name: Save ccache
+        if: always() && steps.ccache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache
+          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
+
+      - name: Save apk package downloads cache
+        if: always() && steps.apk-cache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/apk-cache
+          key: ${{ steps.apk-cache-restore.outputs.cache-primary-key }}
