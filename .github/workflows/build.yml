@@ -92,8 +92,19 @@ jobs:
       - name: Build modloop
         run: bash tools/build-modloop.sh
 
-      - name: Build NVMe image
+      - name: Build NVMe image (live mode)
         run: bash tools/build-nvme-image.sh
+
+      - name: Build NVMe image (sys-install)
+        # Reuses the kernel + modules tree from the steps above — see
+        # tools/build-nvme-sysinstall.sh, which bails early if
+        # out/vmlinuz-lts isn't present. Marginal cost is the apk.static
+        # bootstrap + ext4 pack + zstd, ~5–10 min on a warm runner.
+        # The artefact (alpine-scev-sysinstall-*.img[.zst]) rides along
+        # via the existing out/alpine-scev-*.img[.zst] globs in the
+        # upload + release steps below; downstream mods consume the
+        # .zst from the rolling `latest` release.
+        run: bash tools/build-nvme-sysinstall.sh
 
       - name: Derive release tag
         id: tag
