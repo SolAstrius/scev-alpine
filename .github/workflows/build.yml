@@ -82,6 +82,25 @@ jobs:
           restore-keys: |
             ccache-${{ matrix.alpine }}-
 
+      - name: Cache apk package downloads
+        # Used by tools/build-nvme-sysinstall.sh's `apk.static --cache-dir`
+        # so the ~50 packages bootstrapped into the sys-install rootfs
+        # (alpine-base, openrc, dhcpcd, openssh, …) aren't re-downloaded
+        # on every run. Cold cache: ~30–50 MB pulled from dl-cdn. Warm:
+        # local copies, ~seconds.
+        #
+        # Keyed on the script + Alpine branch — the package list is
+        # declared inline in the script, so any addition/removal
+        # invalidates correctly. The restore-key fallback still picks
+        # up the most recent cache for the same Alpine branch when the
+        # key misses, so script-only edits get a partial warm cache.
+        uses: actions/cache@v4
+        with:
+          path: build/apk-cache
+          key: apk-cache-${{ matrix.alpine }}-${{ hashFiles('tools/build-nvme-sysinstall.sh') }}
+          restore-keys: |
+            apk-cache-${{ matrix.alpine }}-
+
       - name: Build kernel
         run: bash tools/build-kernel.sh
 

@@ -156,11 +156,21 @@ echo "=== Bootstrapping Alpine riscv64 sys-install at $STAGING ==="
 # APKINDEX normally. No --keys-dir: apk3 ignores that flag and reads
 # ${root}/etc/apk/keys directly. Signature chain stays intact end to
 # end, including the installed guest's own future `apk add` runs.
+#
+# --cache-dir (instead of --no-cache) keeps the ~50 fetched .apks in a
+# host-side directory outside the staging tree. CI caches that path
+# across runs so a config-only rebuild skips the package downloads
+# (~2–3 min on a warm runner). Local devs get the same speedup on
+# repeated `make sysinstall`. The staging tree's own
+# /etc/apk/cache stays empty — we still rm -rf var/cache/apk before
+# image pack as belt-and-suspenders.
+APK_CACHE="${BUILD}/apk-cache"
+mkdir -p "$APK_CACHE"
 "$APK_STATIC" \
     --root "$STAGING" \
     --arch "$TARGET_ARCH" \
     --initdb \
-    --no-cache \
+    --cache-dir "$APK_CACHE" \
     -X "$MAIN_REPO" \
     -X "$COMMUNITY_REPO" \
     add \
