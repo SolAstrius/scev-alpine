@@ -53,6 +53,19 @@ jobs:
             ca-certificates curl wget git \
             xz-utils zstd python3 jq
 
+      - name: Register binfmt_misc for riscv64 (qemu-user-static)
+        # apk's post-install triggers (busybox sets up /bin/* symlinks,
+        # ca-certificates rebuilds the bundled cert) are riscv64 ELF
+        # binaries. apk execs them directly during `apk add`, so without
+        # qemu emulation registered with binfmt_misc the build host's
+        # kernel returns ENOEXEC and apk exits with "execve: Exec format
+        # error" / "exited with error 127". docker/setup-qemu-action
+        # handles installation + binfmt registration in one step (uses
+        # tonistiigi/binfmt under the hood).
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: riscv64
+
       - name: Wire up ccache
         # Cuts config-only rebuilds from ~30 min to ~5 min. On a kernel
         # version bump (rare) the cache goes cold and we're back to full

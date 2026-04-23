@@ -46,6 +46,27 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# Preflight: binfmt_misc must have a riscv64 handler registered.
+# apk's post-install triggers (busybox sets up /bin/* symlinks, ca-
+# certificates rebuilds the bundled cert) are riscv64 ELFs that apk
+# execs directly during `apk add`. Without qemu-user-static + binfmt_misc
+# the kernel returns ENOEXEC and apk fails with "execve: Exec format error".
+#
+# Check for /proc/sys/fs/binfmt_misc/qemu-riscv64 — created by either
+# `update-binfmts --enable qemu-riscv64` (Debian/Ubuntu binfmt-support)
+# or `docker run --privileged --rm tonistiigi/binfmt --install riscv64`
+# (the multiarch image). The actual handler name varies slightly
+# across distros (qemu-riscv64 vs qemu-riscv64-static), so we glob.
+if ! ls /proc/sys/fs/binfmt_misc/qemu-riscv64* >/dev/null 2>&1; then
+    echo "ERROR: no riscv64 binfmt_misc handler registered." >&2
+    echo "       apk's post-install scripts are riscv64 ELFs and need" >&2
+    echo "       qemu-user emulation registered with the kernel to run." >&2
+    echo "       Register it with one of:" >&2
+    echo "         apt install qemu-user-static binfmt-support" >&2
+    echo "         docker run --privileged --rm tonistiigi/binfmt --install riscv64" >&2
+    exit 1
+fi
+
 mkdir -p "$OUT" "$BUILD"
 
 # --- Resolve ALPINE_REL if a branch name was passed ---------------------

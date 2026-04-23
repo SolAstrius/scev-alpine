@@ -17,6 +17,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cpio kmod \
         # filesystem tooling
         squashfs-tools e2fsprogs fdisk dosfstools \
+        # cross-arch script execution: apk's post-install triggers
+        # for busybox + ca-certificates are riscv64 ELFs that apk
+        # execs during `apk add` in build-nvme-sysinstall.sh. Without
+        # qemu-user-static + binfmt_misc the kernel returns ENOEXEC.
+        # The container has the qemu binaries; binfmt_misc is a HOST
+        # kernel facility — register it on the host before running:
+        #
+        #   docker run --privileged --rm tonistiigi/binfmt --install riscv64
+        #
+        # (Once per host boot. The container then sees the registered
+        # handler via /proc/sys/fs/binfmt_misc/qemu-riscv64.)
+        qemu-user-static \
         # networking / fetch
         ca-certificates curl wget \
         git \
