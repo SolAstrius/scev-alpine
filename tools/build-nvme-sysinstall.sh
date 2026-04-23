@@ -171,20 +171,37 @@ echo "=== Bootstrapping Alpine riscv64 sys-install at $STAGING ==="
 # ${root}/etc/apk/keys directly. Signature chain stays intact end to
 # end, including the installed guest's own future `apk add` runs.
 #
-# --cache-dir (instead of --no-cache) keeps the ~50 fetched .apks in a
-# host-side directory outside the staging tree. CI caches that path
-# across runs so a config-only rebuild skips the package downloads
-# (~2–3 min on a warm runner). Local devs get the same speedup on
-# repeated `make sysinstall`. The staging tree's own
-# /etc/apk/cache stays empty — we still rm -rf var/cache/apk before
-# image pack as belt-and-suspenders.
-APK_CACHE="${BUILD}/apk-cache"
-mkdir -p "$APK_CACHE"
+# Package-download cache: apk's --cache-dir is resolved relative to
+# --root (see apk.8 "treated relative to the ROOT"), so a host-side
+# absolute path fails with "Unable to setup the cache: No such file
+# or directory". Instead we point apk at the standard in-root path
+# (var/cache/apk) and shuttle the contents in/out around the install:
+# pre-seed from the host-side persistent cache, let apk download-
+# or-reuse, copy back out. The existing rm -rf var/cache/apk below
+# still clears it before mkfs.ext4 -d so the cached .apks don't
+# bloat the shipped image.
+#
+# --cache-packages explicitly enables cache writes during `add`.
+# apk auto-enables it when /etc/apk/cache is a symlink, but we use
+# a plain dir so we have to ask for it.
+#
+# CI persists ${BUILD}/apk-cache via actions/cache to skip the
+# ~30–50 MB package download on warm runs (~2–3 min saved). Local
+# devs get the same speedup on repeated `make sysinstall` without
+# nuking build/.
+APK_HOST_CACHE="${BUILD}/apk-cache"
+mkdir -p "$APK_HOST_CACHE"
+mkdir -p "${STAGING}/var/cache/apk"
+if [ -n "$(ls -A "$APK_HOST_CACHE" 2>/dev/null)" ]; then
+    echo "    → pre-seeding staging cache from ${APK_HOST_CACHE}"
+    cp -a "${APK_HOST_CACHE}/." "${STAGING}/var/cache/apk/"
+fi
 "$APK_STATIC" \
     --root "$STAGING" \
     --arch "$TARGET_ARCH" \
     --initdb \
-    --cache-dir "$APK_CACHE" \
+    --cache-dir "var/cache/apk" \
+    --cache-packages \
     -X "$MAIN_REPO" \
     -X "$COMMUNITY_REPO" \
     add \
@@ -196,6 +213,15 @@ mkdir -p "$APK_CACHE"
         openssh \
         ca-certificates tzdata \
         mkinitfs
+
+# Copy the now-populated staging cache back to the host-side
+# persistent cache so the next run reuses these .apks instead of
+# re-downloading. cp -a preserves timestamps + permissions, which
+# apk uses to decide whether a cached entry is still valid.
+if [ -d "${STAGING}/var/cache/apk" ]; then
+    echo "    → saving staging cache → ${APK_HOST_CACHE}"
+    cp -a "${STAGING}/var/cache/apk/." "${APK_HOST_CACHE}/"
+fi
 
 # --- /etc configuration -------------------------------------------------
 
