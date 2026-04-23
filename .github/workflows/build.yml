@@ -20,7 +20,7 @@ on:
       - '.github/workflows/build.yml'
 
 permissions:
-  contents: write   # needed to create/update releases via softprops/action-gh-release
+  contents: write   # needed to create/update releases via `gh release`
 
 jobs:
   build:
@@ -211,21 +211,16 @@ jobs:
         # artefacts. Gives the mod's Gradle fetch step a stable URL
         # (https://github.com/<owner>/scev-alpine/releases/download/latest/…)
         # without having to bump a version pin every build.
+        #
+        # Uses `gh release upload --clobber` instead of softprops/action-
+        # gh-release@v2 because the latter races against its own delete
+        # when re-uploading assets to an existing release, producing
+        # intermittent "Error creating policy" failures on ~1 in 5 runs.
+        # --clobber is an atomic server-side replace; no race.
         if: github.ref == 'refs/heads/main' && matrix.alpine == '3.23'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest
-          name: "Latest main build"
-          prerelease: true
-          make_latest: false       # keep dated tags as the canonical releases
-          files: |
-            out/vmlinuz-lts
-            out/modloop-lts
-            out/alpine-scev-*.img
-            out/alpine-scev-*.img.zst
-            out/config-*.riscv64
-            out/SHA256SUMS
-          body: |
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BODY: |
             Rolling latest build of `main`. Overwritten every push.
 
             - Commit: ${{ github.sha }}
@@ -236,24 +231,52 @@ jobs:
             `alpine-scev-*.img` from this release at build time. For a
             stable pin, use one of the dated `alpine-*-linux-*-<sha>`
             releases instead.
+        run: |
+          set -euo pipefail
+          gh release view latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create latest --repo "$GITHUB_REPOSITORY" \
+                 --prerelease --latest=false \
+                 --title "Latest main build" --notes "bootstrapping"
+          gh release edit latest --repo "$GITHUB_REPOSITORY" \
+            --prerelease --latest=false \
+            --title "Latest main build" --notes "$BODY"
+          gh release upload latest --repo "$GITHUB_REPOSITORY" --clobber \
+            out/vmlinuz-lts \
+            out/modloop-lts \
+            out/alpine-scev-*.img \
+            out/alpine-scev-*.img.zst \
+            out/config-*.riscv64 \
+            out/SHA256SUMS
 
       - name: Publish dated release
         # Only on scheduled runs + explicit dispatches. Push-triggered CI
         # only bumps the rolling `latest` tag above — keeps the versioned
         # release list tied to deliberate cadence, not every commit.
         if: github.event_name != 'push'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: Alpine ${{ matrix.alpine }} • Linux ${{ steps.tag.outputs.kver }}-scev
-          generate_release_notes: true
-          files: |
-            out/vmlinuz-lts
-            out/modloop-lts
-            out/alpine-scev-*.img
-            out/alpine-scev-*.img.zst
-            out/config-*.riscv64
-            out/SHA256SUMS
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          TITLE: Alpine ${{ matrix.alpine }} • Linux ${{ steps.tag.outputs.kver }}-scev
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+              out/vmlinuz-lts \
+              out/modloop-lts \
+              out/alpine-scev-*.img \
+              out/alpine-scev-*.img.zst \
+              out/config-*.riscv64 \
+              out/SHA256SUMS
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "$TITLE" --generate-notes \
+              out/vmlinuz-lts \
+              out/modloop-lts \
+              out/alpine-scev-*.img \
+              out/alpine-scev-*.img.zst \
+              out/config-*.riscv64 \
+              out/SHA256SUMS
+          fi
 
       # Cache saves run last, gated on `if: always()` so they fire even
       # if any earlier step (kernel build, sysinstall, release publish)
