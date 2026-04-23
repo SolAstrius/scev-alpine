@@ -11,9 +11,9 @@ OUT_DIR    ?= out
 # The CI workflow overrides this with the exact release (e.g. "3.23.4").
 ALPINE_REL ?= $(ALPINE_VER)
 
-.PHONY: all kernel modloop image clean distclean
+.PHONY: all kernel modloop image sysinstall clean distclean
 
-all: image
+all: sysinstall
 
 kernel:
 	tools/build-kernel.sh
@@ -21,8 +21,16 @@ kernel:
 modloop: kernel
 	tools/build-modloop.sh
 
+# Legacy live-mode image (kept for reference / fallback). Pid 1 runs from
+# tmpfs — requires `lbu commit` or `setup-alpine -d` to persist changes.
 image: modloop
 	tools/build-nvme-image.sh
+
+# Production sys-install image. Pid 1 runs from on-disk ext4; every write
+# persists without any apkovl / lbu / snapshot machinery. This is what the
+# mod's preloaded NVMe ships.
+sysinstall: modloop
+	tools/build-nvme-sysinstall.sh
 
 # Light clean — keep the kernel source checkout so subsequent rebuilds are
 # incremental. Remove only staging / intermediate bits.
