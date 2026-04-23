@@ -180,11 +180,25 @@ echo "    → found ${TARGET_ARCH_KEYS_COUNT} ${TARGET_ARCH} signing keys"
 MAIN_REPO="https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VER}/main"
 COMMUNITY_REPO="https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VER}/community"
 
+# Our own signed APK repo (alpine-apks on GH Pages) — ships scev and any
+# other custom packages we build. Pinned to the same ALPINE_VER track
+# so its APKBUILDs are consistent with the base image's libc/toolchain.
+SCEV_REPO="https://solastrius.github.io/alpine-apks/alpine/v${ALPINE_VER}/main"
+SCEV_PUBKEY="${ROOT}/config/apk-keys/SolAstrius@alpine-apks.rsa.pub"
+
 # Pre-seed the target's /etc/apk/keys with the riscv64 signing keys
 # BEFORE the first APKINDEX fetch. Without this, apk3 would warn
 # "UNTRUSTED signature" and silently fail every package selection.
+# Also drop in our own signing key so apk trusts the SCEV_REPO index.
 mkdir -p "${STAGING}/etc/apk/keys"
 cp "$TARGET_ARCH_KEYS_DIR"/*.rsa.pub "${STAGING}/etc/apk/keys/"
+if [ -f "$SCEV_PUBKEY" ]; then
+    cp "$SCEV_PUBKEY" "${STAGING}/etc/apk/keys/"
+    echo "    → trusted scev repo key: $(basename "$SCEV_PUBKEY")"
+else
+    echo "ERROR: scev repo pubkey missing at $SCEV_PUBKEY" >&2
+    exit 1
+fi
 
 echo "=== Bootstrapping Alpine riscv64 sys-install at $STAGING ==="
 # No --allow-untrusted: the seeded keys above let apk verify the
@@ -225,6 +239,7 @@ fi
     --cache-packages \
     -X "$MAIN_REPO" \
     -X "$COMMUNITY_REPO" \
+    -X "$SCEV_REPO" \
     add \
         alpine-base alpine-keys \
         openrc busybox-openrc busybox-mdev-openrc \
@@ -233,7 +248,8 @@ fi
         iproute2 ifupdown-ng dhcpcd \
         openssh \
         ca-certificates tzdata \
-        mkinitfs
+        mkinitfs \
+        scev
 
 # Copy the now-populated staging cache back to the host-side
 # persistent cache so the next run reuses these .apks instead of
@@ -265,6 +281,7 @@ EOF
 cat > "${STAGING}/etc/apk/repositories" <<EOF
 $MAIN_REPO
 $COMMUNITY_REPO
+$SCEV_REPO
 EOF
 
 cat > "${STAGING}/etc/network/interfaces" <<EOF
