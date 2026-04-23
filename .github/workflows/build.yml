@@ -63,6 +63,17 @@ jobs:
           ccache --max-size=1G
           echo "CROSS_COMPILE=ccache riscv64-linux-gnu-" >> $GITHUB_ENV
 
+      # save-always on all three caches: actions/cache@v4 defaults the
+      # post-action condition to `success()`, which means a downstream
+      # step failure (e.g. sysinstall step erroring out) silently skips
+      # the cache save. We then have to redo the 30-min kernel build
+      # from cold on the next push. save-always: true makes the post
+      # action use `if: always()` so partial work is preserved across
+      # build failures — important here because each cached path is
+      # idempotent download/intermediate state, not failure-tainted
+      # output: ccache hashes inputs so stale entries don't corrupt
+      # later builds, the kernel tarball + extracted source are
+      # invariant by version, and apk-cache is just downloaded .apks.
       - name: Cache kernel source + downloads
         uses: actions/cache@v4
         with:
@@ -73,6 +84,7 @@ jobs:
           key: kernel-${{ matrix.alpine }}-${{ hashFiles('config/scev.config', 'tools/build-kernel.sh') }}
           restore-keys: |
             kernel-${{ matrix.alpine }}-
+          save-always: true
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -81,6 +93,7 @@ jobs:
           key: ccache-${{ matrix.alpine }}-${{ github.sha }}
           restore-keys: |
             ccache-${{ matrix.alpine }}-
+          save-always: true
 
       - name: Cache apk package downloads
         # Used by tools/build-nvme-sysinstall.sh's `apk.static --cache-dir`
@@ -100,6 +113,7 @@ jobs:
           key: apk-cache-${{ matrix.alpine }}-${{ hashFiles('tools/build-nvme-sysinstall.sh') }}
           restore-keys: |
             apk-cache-${{ matrix.alpine }}-
+          save-always: true
 
       - name: Build kernel
         run: bash tools/build-kernel.sh
