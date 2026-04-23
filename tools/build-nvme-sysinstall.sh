@@ -32,6 +32,20 @@ ALPINE_VER=${ALPINE_VER:-3.23}
 ALPINE_REL=${ALPINE_REL:-$ALPINE_VER}
 MIN_IMG_MB=${MIN_IMG_MB:-1024}   # advertised disk size (matches NvmeItem.SIZE_MB)
 
+# Preflight: must be root. apk.static --initdb refuses non-root, and even
+# with --usermode the resulting staging tree would be runner-owned —
+# mkfs.ext4 -d would propagate that into the image and the guest's sshd
+# would refuse to start (StrictModes), sudo wouldn't be setuid-root, etc.
+# CI wraps this with `sudo -E`; local devs typically run inside the
+# scev-alpine-builder Docker image (root by default) or via sudo.
+if [ "$(id -u)" -ne 0 ]; then
+    echo "ERROR: must be run as root (apk.static --initdb requires it)" >&2
+    echo "       Re-invoke with: sudo -E bash $0" >&2
+    echo "       Or run inside the scev-alpine-builder Docker image" >&2
+    echo "       (Dockerfile at the repo root) which is root by default." >&2
+    exit 1
+fi
+
 mkdir -p "$OUT" "$BUILD"
 
 # --- Resolve ALPINE_REL if a branch name was passed ---------------------

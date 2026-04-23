@@ -115,6 +115,21 @@ jobs:
         run: bash tools/build-nvme-image.sh
 
       - name: Build NVMe image (sys-install)
+        # Run under sudo: apk.static --initdb refuses to create a package
+        # database as a non-root user ("Use --usermode to allow creating
+        # database as non-root"). --usermode would let it proceed, but
+        # ownership metadata is lost — every file in the bootstrapped
+        # staging tree ends up runner-owned, mkfs.ext4 -d propagates that
+        # into the image, and the resulting Alpine guest has /etc, /bin,
+        # /sbin owned by some random UID. sshd refuses to start
+        # (StrictModes), sudo isn't setuid-root, the whole image is broken.
+        #
+        # Real root via sudo lets apk set proper 0:0 ownership on system
+        # paths. -E preserves ALPINE_VER and friends from the workflow
+        # env. The chown afterward returns build/ + out/ to runner
+        # ownership so actions/cache@v4 (Post Cache apk package downloads)
+        # and actions/upload-artifact@v4 can read them.
+        #
         # Reuses the kernel + modules tree from the steps above — see
         # tools/build-nvme-sysinstall.sh, which bails early if
         # out/vmlinuz-lts isn't present. Marginal cost is the apk.static
@@ -123,7 +138,9 @@ jobs:
         # via the existing out/alpine-scev-*.img[.zst] globs in the
         # upload + release steps below; downstream mods consume the
         # .zst from the rolling `latest` release.
-        run: bash tools/build-nvme-sysinstall.sh
+        run: |
+          sudo -E bash tools/build-nvme-sysinstall.sh
+          sudo chown -R "$USER:$USER" build/ out/
 
       - name: Derive release tag
         id: tag
