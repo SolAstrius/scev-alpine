@@ -249,6 +249,7 @@ fi
         openssh \
         ca-certificates tzdata \
         mkinitfs \
+        alsa-utils \
         scev
 
 # Copy the now-populated staging cache back to the host-side
@@ -411,6 +412,36 @@ echo "[scev-netcheck] eth0: no lease after 30s" > /dev/ttyS0
 exit 1
 EOF
 chmod +x "${STAGING}/etc/local.d/scev-netcheck.start"
+
+# /etc/local.d/scev-sound.start — unmute the HDA codec at boot.
+#
+# Real HDA codecs default to mute=1 on power-on per spec §7.3.3.7, and
+# although our emulated CMedia codec advertises mute=0, Alpine's alsa
+# init runs `alsactl init` once when alsa-utils is first installed and
+# can capture a transient muted state into /var/lib/alsa/asound.state —
+# which then gets restored on every subsequent boot.
+#
+# Cheaper to just unconditionally unmute + persist on each boot than
+# to debug exactly when alsactl decided to save mute=on. amixer / alsactl
+# are no-ops if asound has no Master control yet (kernel still loading
+# snd_hda_intel) — `|| true` swallows that race; a re-run on the next
+# boot will succeed.
+#
+# Idempotent — safe to run every boot. The `alsactl store` writes the
+# same state file alsactl restore reads from, so future boots come up
+# unmuted before this script even fires.
+cat > "${STAGING}/etc/local.d/scev-sound.start" <<'EOF'
+#!/bin/sh
+# Wait briefly for the HDA codec to enumerate (kernel module load,
+# codec verb probe, mixer control creation). 5 s is generous on RVVM.
+for _ in $(seq 1 5); do
+    amixer -q sget 'Master' >/dev/null 2>&1 && break
+    sleep 1
+done
+amixer -q sset 'Master' unmute 80% 2>/dev/null || true
+alsactl -f /var/lib/alsa/asound.state store 2>/dev/null || true
+EOF
+chmod +x "${STAGING}/etc/local.d/scev-sound.start"
 
 # Per-tty agetty services. Alpine's agetty-openrc package ships the
 # /etc/init.d/agetty template; per-tty instances are created by setup-
