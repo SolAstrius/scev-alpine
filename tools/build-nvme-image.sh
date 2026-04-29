@@ -89,6 +89,16 @@ cp "${OUT}/modloop-lts" "${ROOTFS}/boot/modloop-lts"
 #     console=tty0           — the framebuffer, so Alpine login lands on
 #                              the workstation screen
 #     earlycon=sbi           — visible before simple-framebuffer attaches
+#     8250.nr_uarts=32       — Alpine's stock kernel builds with
+#                              CONFIG_SERIAL_8250_NR_UARTS=4. RVVM ships
+#                              one on-board ns16550a (FDT, registered via
+#                              of_serial), and the mod can attach an
+#                              Exar XR17V35x PCIe combo card with up to
+#                              16 ports. PCI probes before of_serial, so
+#                              with the default 4 slots the on-board UART
+#                              loses to the Exar ports and silently fails
+#                              to register. Bump the runtime cap so the
+#                              on-board UART always registers.
 # Order matters: Linux picks the LAST `console=` as /dev/console, which
 # is where getty respawns, so tty0 is last → login prompt on the screen.
 EXTLINUX="${ROOTFS}/extlinux/extlinux.conf"
@@ -101,10 +111,10 @@ def rewrite_append(m):
     existing = m.group(1).split()
     # Drop `quiet` — we want to see boot output.
     filtered = [w for w in existing if w != "quiet"]
-    # Drop any pre-existing console=/earlycon= so we don't stack them.
-    filtered = [w for w in filtered if not w.startswith(("console=", "earlycon="))]
+    # Drop any pre-existing console=/earlycon=/8250.nr_uarts= so we don't stack them.
+    filtered = [w for w in filtered if not w.startswith(("console=", "earlycon=", "8250.nr_uarts="))]
     # Append ours in the right order.
-    filtered += ["console=ttyS0,115200", "earlycon=sbi", "console=tty0"]
+    filtered += ["console=ttyS0,115200", "earlycon=sbi", "console=tty0", "8250.nr_uarts=32"]
     return "APPEND " + " ".join(filtered)
 text = re.sub(r"APPEND\s+(.*)", rewrite_append, text)
 with open(path, "w") as f:

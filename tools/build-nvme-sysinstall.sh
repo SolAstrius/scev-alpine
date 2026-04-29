@@ -573,8 +573,13 @@ PROMPT 0
 LABEL scev
     MENU LABEL Alpine Linux (scev sys-install)
     LINUX /boot/vmlinuz-lts
-    APPEND root=/dev/nvme0n1p1 rw rootfstype=ext4 console=ttyS0,115200 earlycon=sbi console=tty0
+    APPEND root=/dev/nvme0n1p1 rw rootfstype=ext4 console=ttyS0,115200 earlycon=sbi console=tty0 8250.nr_uarts=32
 EOF
+# 8250.nr_uarts=32 — Alpine builds the kernel with CONFIG_SERIAL_8250_NR_UARTS=4,
+# which collides with RVVM mods that attach an Exar XR17V35x PCIe combo card
+# (up to 16 ports). PCI probes before of_serial, so the 4 default slots fill
+# with Exar ports and the on-board ns16550a loses its registration silently.
+# 32 covers the worst case (16 Exar + on-board) with headroom.
 
 # --- Clean cache + temp artifacts --------------------------------------
 
