@@ -251,6 +251,8 @@ fi
         mkinitfs \
         alsa-utils \
         pciutils can-utils mpg123 wget \
+        mtd-utils i2c-tools libgpiod spi-tools evtest \
+        tcpdump ethtool iw curl htop lsof strace kbd \
         scev
 
 # Copy the now-populated staging cache back to the host-side
