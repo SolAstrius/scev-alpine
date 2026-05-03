@@ -250,6 +250,7 @@ fi
         ca-certificates tzdata \
         mkinitfs \
         alsa-utils \
+        pciutils can-utils mpg123 wget \
         scev
 
 # Copy the now-populated staging cache back to the host-side
